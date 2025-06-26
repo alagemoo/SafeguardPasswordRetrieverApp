@@ -4,6 +4,7 @@ using System.Security.Cryptography; // Added for CryptographicException
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.Extensions.Configuration;
 using OneIdentity.SafeguardDotNet;
+using System.Runtime.InteropServices;  // added for SecureString conversion
 
 class Program
 {
@@ -44,6 +45,7 @@ class Program
                 throw new Exception("Invalid API version format in appsettings.json. 'Safeguard:ApiVersion' must be an integer.");
             }
 
+ 
             // Validate PFX path if certificate source is PFX
             if (certificateSource!.ToLowerInvariant() == "pfx" && string.IsNullOrEmpty(pfxPath))
             {
@@ -51,15 +53,32 @@ class Program
             }
 
             // Get client certificate from store or PFX file
-            X509Certificate2 clientCertificate = GetCertificateFromStore(
-                certificateThumbprint!,
-                certificateSource!,
-                pfxPath,
-                pfxPassword);
+                       X509Certificate2 clientCertificate = GetCertificateFromStore(
+                           certificateThumbprint!,
+                           certificateSource!,
+                           pfxPath,
+                           pfxPassword);
+
+
 
             // Establish A2A context and retrieve password
             using (var a2aContext = Safeguard.A2A.GetContext(applianceAddress!, certificateThumbprint!, apiVersion, true))
             {
+
+                // Establish connection to Safeguard
+                // print information of connected user for debug 
+                //
+                Console.WriteLine();
+                Console.WriteLine("---------");
+
+                // connect with keystore cert
+               
+                var connection = Safeguard.Connect(applianceAddress, certificateThumbprint);
+                
+                Console.WriteLine(connection.InvokeMethod(Service.Core, Method.Get, "Me"));
+                Console.WriteLine("---------");
+                Console.WriteLine();
+
                 // Convert API key to SecureString for security
                 SecureString secureApiKey = new SecureString();
                 foreach (char c in apiKey!)
@@ -67,9 +86,15 @@ class Program
                     secureApiKey.AppendChar(c);
                 }
                 secureApiKey.MakeReadOnly();
-
+                
+                //retrieve password via A2A from Safeguard
                 var password = a2aContext.RetrievePassword(secureApiKey);
-                Console.WriteLine($"Retrieved database password: {password}");
+
+                // Convert SecureString to PlainText for display to check returned value
+                var retrievedPassword = SecureStringToString(password);
+                Console.WriteLine($"Retrieved database password: {retrievedPassword}");
+
+
             }
         }
         catch (Exception ex)
@@ -158,4 +183,32 @@ class Program
             throw new ArgumentException($"Invalid CertificateSource value '{certificateSource}'. Supported values are 'keystore' or 'pfx'.");
         }
     }
+
+
+    // 
+    // Convert a secureString to a String
+    //
+    // taken from: https://stackoverflow.com/questions/818704/how-to-convert-securestring-to-system-string/38016279#38016279
+    //
+    //
+
+    private static String SecureStringToString(SecureString value)
+    {
+        IntPtr bstr = IntPtr.Zero;
+
+        try
+        {
+            bstr = Marshal.SecureStringToBSTR(value);
+            return Marshal.PtrToStringBSTR(bstr);
+        }
+        finally
+        {
+            if (bstr != IntPtr.Zero)
+            {
+                Marshal.ZeroFreeBSTR(bstr);
+            }
+        }
+    }
+    
+    
 }
